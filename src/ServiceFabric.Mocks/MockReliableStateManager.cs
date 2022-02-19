@@ -7,6 +7,7 @@
     using System;
     using System.Fabric;
     using System.IO;
+    using System.Reflection;
     using System.Threading;
     using System.Threading.Tasks;
 
@@ -17,10 +18,11 @@
     {
         private int _totalTransactionInstanceCount;
         private readonly TransactedConcurrentDictionary<Uri, IReliableState> _store;
+        private readonly StateSerializerStore stateSerializerStore;
 
         public MockReliableStateManager(TransactedConcurrentDictionary<Uri, IReliableState> store = null)
         {
-            _store = store ?? new TransactedConcurrentDictionary<Uri, IReliableState>(new Uri("fabric://state", UriKind.Absolute));
+            _store = store ?? new TransactedConcurrentDictionary<Uri, IReliableState>(new Uri("fabric://state", UriKind.Absolute), null);
             _store.InternalDictionaryChanged +=
                 (sender, args) =>
                 {
@@ -41,6 +43,7 @@
                         StateManagerChanged.Invoke(this, changeEvent);
                     }
                 };
+            stateSerializerStore = new StateSerializerStore();
         }
 
         #region TestHooks
@@ -201,7 +204,7 @@
 
         public bool TryAddStateSerializer<T>(IStateSerializer<T> stateSerializer)
         {
-            return true;
+            return stateSerializerStore.TryAddStateSerializer(stateSerializer);
         }
 
         #region TrygetAsync
@@ -309,10 +312,15 @@
             MockTransactionChanged?.Invoke(this, (MockTransaction)tx);
         }
 
-        private static IReliableState ConstructMockCollection(Uri name, Type genericType, Type[] typeArguments)
+        private IReliableState ConstructMockCollection(Uri name, Type genericType, Type[] typeArguments)
         {
             var type = genericType.MakeGenericType(typeArguments);
-            var reliable = (IReliableState)Activator.CreateInstance(type, name);
+            var reliable = (IReliableState)Activator.CreateInstance(
+                type,
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.CreateInstance,
+                null,
+                new object[] { name, stateSerializerStore },
+                null);
 
             return reliable;
         }

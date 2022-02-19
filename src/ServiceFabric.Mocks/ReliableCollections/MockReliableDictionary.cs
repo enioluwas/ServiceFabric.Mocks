@@ -5,6 +5,7 @@
     using Microsoft.ServiceFabric.Data.Notifications;
     using System;
     using System.Collections.Generic;
+    using System.IO;
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
@@ -17,6 +18,9 @@
     public class MockReliableDictionary<TKey, TValue> : TransactedConcurrentDictionary<TKey, TValue>, IReliableDictionary2<TKey, TValue>
         where TKey : IEquatable<TKey>, IComparable<TKey>
     {
+        private readonly IStateSerializer<TKey> keySerializer;
+        private readonly IStateSerializer<TValue> valueSerializer;
+
         public long Count => Dictionary.Count;
 
         public MockReliableDictionary(Uri uri)
@@ -52,6 +56,66 @@
                 };
         }
 
+        internal MockReliableDictionary(Uri uri, IReadOnlyStateSerializerStore serializerStore)
+            : this(uri)
+        {
+            serializerStore.TryGetStateSerializer(out IStateSerializer<TKey> keySerializer);
+            this.keySerializer = keySerializer;
+
+            serializerStore.TryGetStateSerializer(out IStateSerializer<TValue> valueSerializer);
+            this.valueSerializer = valueSerializer;
+        }
+
+        /// <summary>
+        /// Clones <paramref name="key"/> if there is a key serializer registered for it. If not, returns the same value.
+        /// Used to ensure that when the value is serializable, no direct reference to an object enters or leaves the reliable collection.
+        /// </summary>
+        /// <param name="key"></param>
+        private TKey MaybeCloneKey(TKey key)
+        {
+            if (key != null && this.keySerializer != null)
+            {
+                using (MemoryStream memoryStream = new MemoryStream())
+                {
+                    using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
+                    using (BinaryReader binaryReader = new BinaryReader(memoryStream))
+                    {
+                        this.keySerializer.Write(key, binaryWriter);
+                        // Set the position back to the beginning of the stream before reading.
+                        memoryStream.Position = 0;
+                        return this.keySerializer.Read(binaryReader);
+                    }
+                }
+            }
+
+            return key;
+        }
+
+        /// <summary>
+        /// Clones <paramref name="value"/> if there is a value serializer registered for it. If not, returns the same value.
+        /// Used to ensure that when the value is serializable, no direct reference to an object enters or leaves the reliable collection.
+        /// </summary>
+        /// <param name="value"></param>
+        private TValue MaybeCloneValue(TValue value)
+        {
+            if (value != null && this.valueSerializer != null)
+            {
+                using (MemoryStream memoryStream = new MemoryStream())
+                {
+                    using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
+                    using (BinaryReader binaryReader = new BinaryReader(memoryStream))
+                    {
+                        this.valueSerializer.Write(value, binaryWriter);
+                        // Set the position back to the beginning of the stream before reading.
+                        memoryStream.Position = 0;
+                        return this.valueSerializer.Read(binaryReader);
+                    }
+                }
+            }
+
+            return value;
+        }
+
         /// <summary>
         /// Never invoked, but settable.
         /// </summary>
@@ -69,24 +133,24 @@
         #region AddAsync
         public Task AddAsync(ITransaction tx, TKey key, TValue value)
         {
-            return base.AddAsync(tx, key, value);
+            return base.AddAsync(tx, MaybeCloneKey(key), MaybeCloneValue(value));
         }
         #endregion
 
         #region AddOrUpdateAsync
         public Task<TValue> AddOrUpdateAsync(ITransaction tx, TKey key, Func<TKey, TValue> addValueFactory, Func<TKey, TValue, TValue> updateValueFactory)
         {
-            return base.AddOrUpdateAsync(tx, key, addValueFactory, updateValueFactory);
+            return base.AddOrUpdateAsync(tx, MaybeCloneKey(key), (k) => MaybeCloneValue(addValueFactory(k)), (k, v) => MaybeCloneValue(updateValueFactory(k, v)));
         }
 
         public Task<TValue> AddOrUpdateAsync(ITransaction tx, TKey key, TValue addValue, Func<TKey, TValue, TValue> updateValueFactory)
         {
-            return base.AddOrUpdateAsync(tx, key, (k) => addValue, updateValueFactory);
+            return base.AddOrUpdateAsync(tx, MaybeCloneKey(key), (k) => MaybeCloneValue(addValue), (k, v) => MaybeCloneValue(updateValueFactory(k, v)));
         }
 
         public Task<TValue> AddOrUpdateAsync(ITransaction tx, TKey key, TValue addValue, Func<TKey, TValue, TValue> updateValueFactory, TimeSpan timeout, CancellationToken cancellationToken)
         {
-            return base.AddOrUpdateAsync(tx, key, (k) => addValue, updateValueFactory, timeout, cancellationToken);
+            return base.AddOrUpdateAsync(tx, MaybeCloneKey(key), (k) => MaybeCloneValue(addValue), (k, v) => MaybeCloneValue(updateValueFactory(k, v)), timeout, cancellationToken);
         }
         #endregion
 
@@ -147,7 +211,7 @@
                     keys.Sort();
                 }
 
-                IAsyncEnumerable<KeyValuePair<TKey, TValue>> result = new MockAsyncEnumerable<KeyValuePair<TKey, TValue>>(keys.Select(k => new KeyValuePair<TKey, TValue>(k, Dictionary[k])));
+                IAsyncEnumerable<KeyValuePair<TKey, TValue>> result = new MockAsyncEnumerable<KeyValuePair<TKey, TValue>>(keys.Select(k => new KeyValuePair<TKey, TValue>(MaybeCloneKey(k), MaybeCloneValue(Dictionary[k]))));
                 return result;
             }
             catch
@@ -192,7 +256,7 @@
                     keys.Sort();
                 }
 
-                IAsyncEnumerable<TKey> result = new MockAsyncEnumerable<TKey>(keys);
+                IAsyncEnumerable<TKey> result = new MockAsyncEnumerable<TKey>(keys.Select((key) => MaybeCloneKey(key)));
                 return result;
             }
             catch
@@ -208,64 +272,68 @@
         #endregion
 
         #region GetOrAddAsync
-        public Task<TValue> GetOrAddAsync(ITransaction tx, TKey key, Func<TKey, TValue> valueFactory)
+        public async Task<TValue> GetOrAddAsync(ITransaction tx, TKey key, Func<TKey, TValue> valueFactory)
         {
-            return base.GetOrAddAsync(tx, key, valueFactory);
+            return MaybeCloneValue(await base.GetOrAddAsync(tx, MaybeCloneKey(key), (k) => MaybeCloneValue(valueFactory(k))));
         }
 
-        public Task<TValue> GetOrAddAsync(ITransaction tx, TKey key, TValue value)
+        public async Task<TValue> GetOrAddAsync(ITransaction tx, TKey key, TValue value)
         {
-            return base.GetOrAddAsync(tx, key, (k) => value);
+            return MaybeCloneValue(await base.GetOrAddAsync(tx, MaybeCloneKey(key), (k) => MaybeCloneValue(value)));
         }
 
-        public Task<TValue> GetOrAddAsync(ITransaction tx, TKey key, TValue value, TimeSpan timeout, CancellationToken cancellationToken)
+        public async Task<TValue> GetOrAddAsync(ITransaction tx, TKey key, TValue value, TimeSpan timeout, CancellationToken cancellationToken)
         {
-            return base.GetOrAddAsync(tx, key, (k) => value, timeout, cancellationToken);
+            return MaybeCloneValue(await base.GetOrAddAsync(tx, MaybeCloneKey(key), (k) => MaybeCloneValue(value), timeout, cancellationToken));
         }
         #endregion
 
         #region SetAsync
         public Task SetAsync(ITransaction tx, TKey key, TValue value)
         {
-            return base.SetAsync(tx, key, value, default(TimeSpan), CancellationToken.None);
+            return base.SetAsync(tx, MaybeCloneKey(key), MaybeCloneValue(value), default(TimeSpan), CancellationToken.None);
         }
         #endregion
 
         #region TryAddValue
         public Task<bool> TryAddAsync(ITransaction tx, TKey key, TValue value)
         {
-            return base.TryAddAsync(tx, key, value, default(TimeSpan), CancellationToken.None);
+            return base.TryAddAsync(tx, MaybeCloneKey(key), MaybeCloneValue(value), default(TimeSpan), CancellationToken.None);
         }
         #endregion
 
         #region TryGetValueAsync
-        public Task<ConditionalValue<TValue>> TryGetValueAsync(ITransaction tx, TKey key)
+        public async Task<ConditionalValue<TValue>> TryGetValueAsync(ITransaction tx, TKey key)
         {
-            return base.TryGetValueAsync(tx, key, LockMode.Default, default(TimeSpan), CancellationToken.None);
+            var conditionalValue = await base.TryGetValueAsync(tx, key, LockMode.Default, default(TimeSpan), CancellationToken.None);
+            return new ConditionalValue<TValue>(conditionalValue.HasValue, MaybeCloneValue(conditionalValue.Value));
         }
 
-        public Task<ConditionalValue<TValue>> TryGetValueAsync(ITransaction tx, TKey key, LockMode lockMode)
+        public async Task<ConditionalValue<TValue>> TryGetValueAsync(ITransaction tx, TKey key, LockMode lockMode)
         {
-            return base.TryGetValueAsync(tx, key, lockMode, default(TimeSpan), CancellationToken.None);
+            var conditionalValue = await base.TryGetValueAsync(tx, key, lockMode, default(TimeSpan), CancellationToken.None);
+            return new ConditionalValue<TValue>(conditionalValue.HasValue, MaybeCloneValue(conditionalValue.Value));
         }
 
-        public Task<ConditionalValue<TValue>> TryGetValueAsync(ITransaction tx, TKey key, TimeSpan timeout, CancellationToken cancellationToken)
+        public async Task<ConditionalValue<TValue>> TryGetValueAsync(ITransaction tx, TKey key, TimeSpan timeout, CancellationToken cancellationToken)
         {
-            return base.TryGetValueAsync(tx, key, LockMode.Default, timeout, cancellationToken);
+            var conditionalValue = await base.TryGetValueAsync(tx, key, LockMode.Default, timeout, cancellationToken);
+            return new ConditionalValue<TValue>(conditionalValue.HasValue, MaybeCloneValue(conditionalValue.Value));
         }
         #endregion
 
         #region TryRemoveValueAsync
-        public Task<ConditionalValue<TValue>> TryRemoveAsync(ITransaction tx, TKey key)
+        public async Task<ConditionalValue<TValue>> TryRemoveAsync(ITransaction tx, TKey key)
         {
-            return base.TryRemoveAsync(tx, key, default(TimeSpan), CancellationToken.None);
+            var conditionalValue = await base.TryRemoveAsync(tx, key, default(TimeSpan), CancellationToken.None);
+            return new ConditionalValue<TValue>(conditionalValue.HasValue, MaybeCloneValue(conditionalValue.Value));
         }
         #endregion
 
         #region TryUpdateAsync
         public Task<bool> TryUpdateAsync(ITransaction tx, TKey key, TValue newValue, TValue comparisonValue)
         {
-            return base.TryUpdateAsync(tx, key, newValue, comparisonValue, default(TimeSpan), CancellationToken.None);
+            return base.TryUpdateAsync(tx, key, MaybeCloneValue(newValue), comparisonValue, default(TimeSpan), CancellationToken.None);
         }
         #endregion
     }

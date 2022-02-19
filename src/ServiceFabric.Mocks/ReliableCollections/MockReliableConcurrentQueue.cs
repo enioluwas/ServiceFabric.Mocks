@@ -5,6 +5,7 @@
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
+    using System.IO;
     using System.Threading;
     using System.Threading.Tasks;
 
@@ -17,6 +18,7 @@
         private readonly List<T> _queue = new List<T>();
         private readonly long _queueEmptyTransactionId = -1;
         private readonly Lock<long> _queueEmptyLock = new Lock<long>();
+        private readonly IStateSerializer<T> valueSerializer;
 
         /// <summary>
         /// The constructor.
@@ -25,6 +27,38 @@
         public MockReliableConcurrentQueue(Uri uri)
             : base(uri)
         { }
+
+        internal MockReliableConcurrentQueue(Uri uri, IReadOnlyStateSerializerStore serializerStore)
+            : this(uri)
+        {
+            serializerStore.TryGetStateSerializer(out IStateSerializer<T> valueSerializer);
+            this.valueSerializer = valueSerializer;
+        }
+
+        /// <summary>
+        /// Clones <paramref name="value"/> if there is a value serializer registered for it. If not, returns the same value.
+        /// Used to ensure that when the value is serializable, no direct reference to an object enters or leaves the reliable collection.
+        /// </summary>
+        /// <param name="value"></param>
+        private T MaybeCloneValue(T value)
+        {
+            if (value != null && this.valueSerializer != null)
+            {
+                using (MemoryStream memoryStream = new MemoryStream())
+                {
+                    using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
+                    using (BinaryReader binaryReader = new BinaryReader(memoryStream))
+                    {
+                        this.valueSerializer.Write(value, binaryWriter);
+                        // Set the position back to the beginning of the stream before reading.
+                        memoryStream.Position = 0;
+                        return this.valueSerializer.Read(binaryReader);
+                    }
+                }
+            }
+
+            return value;
+        }
 
         /// <summary>
         /// Release any locks the transaction may have on _queueEmptyLock.
@@ -60,7 +94,7 @@
         {
             BeginTransaction(tx);
 
-            AddCommitAction(tx, () => OnCommit(value));
+            AddCommitAction(tx, () => OnCommit(MaybeCloneValue(value)));
 
             return Task.FromResult(true);
         }
@@ -94,7 +128,7 @@
                             _queue.RemoveAt(0);
                             AddAbortAction(tx, () => OnAbort(value));
 
-                            return new ConditionalValue<T>(true, value);
+                            return new ConditionalValue<T>(true, MaybeCloneValue(value));
                         }
                         else
                         {

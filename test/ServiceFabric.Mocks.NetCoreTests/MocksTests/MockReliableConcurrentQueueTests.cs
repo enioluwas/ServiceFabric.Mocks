@@ -105,5 +105,30 @@
                 Assert.AreEqual(1, (await task).Value);
             }
         }
+
+        [TestMethod]
+        public async Task ClonesValueWithStateSerializerTest()
+        {
+            var serializerStore = new StateSerializerStore();
+            serializerStore.TryAddStateSerializer<TestUser>(new TestUserStateSerializer());
+            var q = new MockReliableConcurrentQueue<TestUser>(new Uri("test://queue"), serializerStore);
+            var user = new TestUser { Name = "Test", LastLoginUtc = DateTime.UtcNow };
+
+            using (var tx1 = _stateManager.CreateTransaction())
+            {
+                await q.EnqueueAsync(tx1, user);
+                await tx1.CommitAsync();
+            }
+
+            user.Name = "NotTest";
+
+            using var tx2 = _stateManager.CreateTransaction();
+            var storedUser = (await q.TryDequeueAsync(tx2)).Value;
+            await tx2.CommitAsync();
+
+            Assert.AreNotSame(user, storedUser);
+            Assert.AreEqual(user.LastLoginUtc, storedUser.LastLoginUtc);
+            Assert.AreNotEqual(user.Name, storedUser.Name);
+        }
     }
 }

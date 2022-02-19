@@ -120,7 +120,6 @@ namespace ServiceFabric.Mocks.NetCoreTests.MocksTests
             Assert.IsFalse(actual.HasValue);
         }
 
-
         [TestMethod]
         public async Task InfiniteLoop_Issue91()
         {
@@ -145,7 +144,6 @@ namespace ServiceFabric.Mocks.NetCoreTests.MocksTests
             Assert.IsTrue(true, "Seems to work.");
             //Assert.Fail("Shouldn't reach here.");
         }
-
 
         //provided as repro, but doesn't repro in mstest
         [TestMethod]

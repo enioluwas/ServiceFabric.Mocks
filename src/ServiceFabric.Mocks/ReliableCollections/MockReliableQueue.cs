@@ -6,6 +6,8 @@ namespace ServiceFabric.Mocks.ReliableCollections
     using Microsoft.ServiceFabric.Data.Collections;
     using System;
     using System.Collections.Generic;
+    using System.IO;
+    using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
 
@@ -17,12 +19,45 @@ namespace ServiceFabric.Mocks.ReliableCollections
     {
         private readonly IndexedQueue<T> _queue = new IndexedQueue<T>();
         private readonly Lock<long> _lock = new Lock<long>();
+        private readonly IStateSerializer<T> valueSerializer;
 
         protected long QueueCount => _queue.Count;
 
         public MockReliableQueue(Uri uri)
             : base(uri)
         { }
+
+        internal MockReliableQueue(Uri uri, IReadOnlyStateSerializerStore serializerStore)
+            : this(uri)
+        {
+            serializerStore.TryGetStateSerializer(out IStateSerializer<T> valueSerializer);
+            this.valueSerializer = valueSerializer;
+        }
+
+        /// <summary>
+        /// Clones <paramref name="value"/> if there is a value serializer registered for it. If not, returns the same value.
+        /// Used to ensure that when the value is serializable, no direct reference to an object enters or leaves the reliable collection.
+        /// </summary>
+        /// <param name="value"></param>
+        private T MaybeCloneValue(T value)
+        {
+            if (value != null && this.valueSerializer != null)
+            {
+                using (MemoryStream memoryStream = new MemoryStream())
+                {
+                    using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
+                    using (BinaryReader binaryReader = new BinaryReader(memoryStream))
+                    {
+                        this.valueSerializer.Write(value, binaryWriter);
+                        // Set the position back to the beginning of the stream before reading.
+                        memoryStream.Position = 0;
+                        return this.valueSerializer.Read(binaryReader);
+                    }
+                }
+            }
+
+            return value;
+        }
 
         public override void ReleaseLocks(ITransaction tx)
         {
@@ -39,7 +74,7 @@ namespace ServiceFabric.Mocks.ReliableCollections
         public async Task<IAsyncEnumerable<T>> CreateEnumerableAsync(ITransaction tx)
         {
             await _lock.Acquire(BeginTransaction(tx).TransactionId, LockMode.Default, default(TimeSpan), CancellationToken.None);
-            return new MockAsyncEnumerable<T>(_queue);
+            return new MockAsyncEnumerable<T>(_queue.Select((value) => MaybeCloneValue(value)));
         }
 
         public Task EnqueueAsync(ITransaction tx, T item)
@@ -50,8 +85,9 @@ namespace ServiceFabric.Mocks.ReliableCollections
         public async Task EnqueueAsync(ITransaction tx, T item, TimeSpan timeout, CancellationToken cancellationToken)
         {
             await _lock.Acquire(BeginTransaction(tx).TransactionId, LockMode.Update, timeout, cancellationToken);
-            _queue.Enqueue(item);
-            AddAbortAction(tx, () => { _queue.Remove(item); return true; });
+            var itemToInsert = MaybeCloneValue(item);
+            _queue.Enqueue(itemToInsert);
+            AddAbortAction(tx, () => { _queue.Remove(itemToInsert); return true; });
         }
 
         public async Task<long> GetCountAsync(ITransaction tx)
@@ -74,7 +110,7 @@ namespace ServiceFabric.Mocks.ReliableCollections
                 T item = _queue.Dequeue();
                 AddAbortAction(tx, () => { _queue.AddToFront(item); return true; });
 
-                return new ConditionalValue<T>(true, item);
+                return new ConditionalValue<T>(true, MaybeCloneValue(item));
             }
 
             return new ConditionalValue<T>();
@@ -100,7 +136,7 @@ namespace ServiceFabric.Mocks.ReliableCollections
             await _lock.Acquire(BeginTransaction(tx).TransactionId, lockMode, timeout, cancellationToken);
             if (_queue.Count > 0)
             {
-                return new ConditionalValue<T>(true, _queue.Peek());
+                return new ConditionalValue<T>(true, MaybeCloneValue(_queue.Peek()));
             }
 
             return new ConditionalValue<T>();
