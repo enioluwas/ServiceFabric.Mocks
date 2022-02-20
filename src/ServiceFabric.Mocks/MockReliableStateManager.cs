@@ -22,7 +22,7 @@
 
         public MockReliableStateManager(TransactedConcurrentDictionary<Uri, IReliableState> store = null)
         {
-            _store = store ?? new TransactedConcurrentDictionary<Uri, IReliableState>(new Uri("fabric://state", UriKind.Absolute), null);
+            _store = store ?? new TransactedConcurrentDictionary<Uri, IReliableState>(new Uri("fabric://state", UriKind.Absolute));
             _store.InternalDictionaryChanged +=
                 (sender, args) =>
                 {
