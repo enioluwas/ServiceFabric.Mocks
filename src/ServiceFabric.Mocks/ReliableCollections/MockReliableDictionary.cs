@@ -60,10 +60,10 @@
             : this(uri)
         {
             serializerStore.TryGetStateSerializer(out IStateSerializer<TKey> keySerializer);
-            this._keySerializer = keySerializer;
+            _keySerializer = keySerializer;
 
             serializerStore.TryGetStateSerializer(out IStateSerializer<TValue> valueSerializer);
-            this._valueSerializer = valueSerializer;
+            _valueSerializer = valueSerializer;
         }
 
         /// <summary>
@@ -73,17 +73,17 @@
         /// <param name="key"></param>
         private TKey MaybeCloneKey(TKey key)
         {
-            if (key != null && this._keySerializer != null)
+            if (!key.Equals(default) && _keySerializer != null)
             {
                 using (MemoryStream memoryStream = new MemoryStream())
                 {
                     using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
                     using (BinaryReader binaryReader = new BinaryReader(memoryStream))
                     {
-                        this._keySerializer.Write(key, binaryWriter);
+                        _keySerializer.Write(key, binaryWriter);
                         // Set the position back to the beginning of the stream before reading.
                         memoryStream.Position = 0;
-                        return this._keySerializer.Read(binaryReader);
+                        return _keySerializer.Read(binaryReader);
                     }
                 }
             }
@@ -98,17 +98,17 @@
         /// <param name="value"></param>
         private TValue MaybeCloneValue(TValue value)
         {
-            if (value != null && this._valueSerializer != null)
+            if (!value.Equals(default) && _valueSerializer != null)
             {
                 using (MemoryStream memoryStream = new MemoryStream())
                 {
                     using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
                     using (BinaryReader binaryReader = new BinaryReader(memoryStream))
                     {
-                        this._valueSerializer.Write(value, binaryWriter);
+                        _valueSerializer.Write(value, binaryWriter);
                         // Set the position back to the beginning of the stream before reading.
                         memoryStream.Position = 0;
-                        return this._valueSerializer.Read(binaryReader);
+                        return _valueSerializer.Read(binaryReader);
                     }
                 }
             }

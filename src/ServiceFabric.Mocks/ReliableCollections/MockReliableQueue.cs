@@ -41,7 +41,7 @@ namespace ServiceFabric.Mocks.ReliableCollections
         /// <param name="value"></param>
         private T MaybeCloneValue(T value)
         {
-            if (value != null && this._valueSerializer != null)
+            if (!value.Equals(default(T)) && this._valueSerializer != null)
             {
                 using (MemoryStream memoryStream = new MemoryStream())
                 {
