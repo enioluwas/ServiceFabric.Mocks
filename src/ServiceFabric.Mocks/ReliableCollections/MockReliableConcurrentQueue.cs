@@ -18,7 +18,7 @@
         private readonly List<T> _queue = new List<T>();
         private readonly long _queueEmptyTransactionId = -1;
         private readonly Lock<long> _queueEmptyLock = new Lock<long>();
-        private readonly IStateSerializer<T> valueSerializer;
+        private readonly IStateSerializer<T> _valueSerializer;
 
         /// <summary>
         /// The constructor.
@@ -32,7 +32,7 @@
             : this(uri)
         {
             serializerStore.TryGetStateSerializer(out IStateSerializer<T> valueSerializer);
-            this.valueSerializer = valueSerializer;
+            this._valueSerializer = valueSerializer;
         }
 
         /// <summary>
@@ -42,17 +42,17 @@
         /// <param name="value"></param>
         private T MaybeCloneValue(T value)
         {
-            if (value != null && this.valueSerializer != null)
+            if (value != null && this._valueSerializer != null)
             {
                 using (MemoryStream memoryStream = new MemoryStream())
                 {
                     using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
                     using (BinaryReader binaryReader = new BinaryReader(memoryStream))
                     {
-                        this.valueSerializer.Write(value, binaryWriter);
+                        this._valueSerializer.Write(value, binaryWriter);
                         // Set the position back to the beginning of the stream before reading.
                         memoryStream.Position = 0;
-                        return this.valueSerializer.Read(binaryReader);
+                        return this._valueSerializer.Read(binaryReader);
                     }
                 }
             }

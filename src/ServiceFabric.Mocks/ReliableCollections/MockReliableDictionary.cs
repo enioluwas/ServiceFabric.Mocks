@@ -18,8 +18,8 @@
     public class MockReliableDictionary<TKey, TValue> : TransactedConcurrentDictionary<TKey, TValue>, IReliableDictionary2<TKey, TValue>
         where TKey : IEquatable<TKey>, IComparable<TKey>
     {
-        private readonly IStateSerializer<TKey> keySerializer;
-        private readonly IStateSerializer<TValue> valueSerializer;
+        private readonly IStateSerializer<TKey> _keySerializer;
+        private readonly IStateSerializer<TValue> _valueSerializer;
 
         public long Count => Dictionary.Count;
 
@@ -60,10 +60,10 @@
             : this(uri)
         {
             serializerStore.TryGetStateSerializer(out IStateSerializer<TKey> keySerializer);
-            this.keySerializer = keySerializer;
+            this._keySerializer = keySerializer;
 
             serializerStore.TryGetStateSerializer(out IStateSerializer<TValue> valueSerializer);
-            this.valueSerializer = valueSerializer;
+            this._valueSerializer = valueSerializer;
         }
 
         /// <summary>
@@ -73,17 +73,17 @@
         /// <param name="key"></param>
         private TKey MaybeCloneKey(TKey key)
         {
-            if (key != null && this.keySerializer != null)
+            if (key != null && this._keySerializer != null)
             {
                 using (MemoryStream memoryStream = new MemoryStream())
                 {
                     using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
                     using (BinaryReader binaryReader = new BinaryReader(memoryStream))
                     {
-                        this.keySerializer.Write(key, binaryWriter);
+                        this._keySerializer.Write(key, binaryWriter);
                         // Set the position back to the beginning of the stream before reading.
                         memoryStream.Position = 0;
-                        return this.keySerializer.Read(binaryReader);
+                        return this._keySerializer.Read(binaryReader);
                     }
                 }
             }
@@ -98,17 +98,17 @@
         /// <param name="value"></param>
         private TValue MaybeCloneValue(TValue value)
         {
-            if (value != null && this.valueSerializer != null)
+            if (value != null && this._valueSerializer != null)
             {
                 using (MemoryStream memoryStream = new MemoryStream())
                 {
                     using (BinaryWriter binaryWriter = new BinaryWriter(memoryStream))
                     using (BinaryReader binaryReader = new BinaryReader(memoryStream))
                     {
-                        this.valueSerializer.Write(value, binaryWriter);
+                        this._valueSerializer.Write(value, binaryWriter);
                         // Set the position back to the beginning of the stream before reading.
                         memoryStream.Position = 0;
-                        return this.valueSerializer.Read(binaryReader);
+                        return this._valueSerializer.Read(binaryReader);
                     }
                 }
             }

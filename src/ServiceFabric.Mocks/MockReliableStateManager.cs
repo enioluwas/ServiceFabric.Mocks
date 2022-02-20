@@ -18,7 +18,7 @@
     {
         private int _totalTransactionInstanceCount;
         private readonly TransactedConcurrentDictionary<Uri, IReliableState> _store;
-        private readonly StateSerializerStore stateSerializerStore;
+        private readonly StateSerializerStore _stateSerializerStore;
 
         public MockReliableStateManager(TransactedConcurrentDictionary<Uri, IReliableState> store = null)
         {
@@ -43,7 +43,7 @@
                         StateManagerChanged.Invoke(this, changeEvent);
                     }
                 };
-            stateSerializerStore = new StateSerializerStore();
+            _stateSerializerStore = new StateSerializerStore();
         }
 
         #region TestHooks
@@ -204,7 +204,7 @@
 
         public bool TryAddStateSerializer<T>(IStateSerializer<T> stateSerializer)
         {
-            return stateSerializerStore.TryAddStateSerializer(stateSerializer);
+            return _stateSerializerStore.TryAddStateSerializer(stateSerializer);
         }
 
         #region TrygetAsync
@@ -319,7 +319,7 @@
                 type,
                 BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.CreateInstance,
                 null,
-                new object[] { name, stateSerializerStore },
+                new object[] { name, _stateSerializerStore },
                 null);
 
             return reliable;
